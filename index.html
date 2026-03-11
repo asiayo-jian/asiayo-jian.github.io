@@ -331,9 +331,11 @@
 </head>
 <body class="bg-gray-50 min-h-screen font-sans">
 
+<!-- 登入遮罩：支援 API Key 記憶 -->
 <div id="auth-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-[100]">
     <div class="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full mx-4 text-center">
         <h2 class="text-2xl font-bold mb-4 text-gray-800">ClickUp Workload Viewer</h2>
+        <p class="text-sm text-gray-500 mb-6 italic">輸入您的 API Key 以存取數據</p>
         <input type="password" id="api-key-input" placeholder="Enter API Key" class="w-full p-3 border border-gray-300 rounded-lg mb-4 outline-none focus:ring-2 focus:ring-blue-500">
         <button onclick="saveKeyAndFetch()" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition">進入系統</button>
     </div>
@@ -342,7 +344,6 @@
 <!-- 任務編輯彈出視窗 -->
 <div id="edit-modal" class="modal-overlay">
     <div class="bg-white rounded-2xl shadow-2xl w-[400px] mx-4 overflow-hidden border border-gray-100">
-        <!-- 標題欄：修正標題過長遮擋按鈕的問題 -->
         <div class="bg-slate-800 px-6 py-4 text-white flex justify-between items-center gap-4">
             <div class="flex-1 min-w-0">
                 <h3 class="font-bold text-lg truncate" id="modal-task-name">編輯任務時間</h3>
@@ -468,11 +469,18 @@
     let G_isFirstLoad = true;
     let G_jumpToDate = null;
 
+    // 修改：增加自動偵測與自動登入邏輯
     window.onload = () => {
         const savedKey = localStorage.getItem('clickup_api_key');
-        if (savedKey) document.getElementById('api-key-input').value = savedKey;
+        if (savedKey) {
+            API_KEY = savedKey;
+            document.getElementById('api-key-input').value = savedKey;
+            document.getElementById('auth-overlay').classList.add('hidden');
+            fetchFolderData();
+        }
     };
 
+    // 儲存金鑰並開始抓取
     function saveKeyAndFetch() {
         const input = document.getElementById('api-key-input').value.trim();
         if (!input) return;
@@ -482,6 +490,7 @@
         fetchFolderData();
     }
 
+    // 登出：清除本地儲存的金鑰並重新整理
     function logout() {
         localStorage.removeItem('clickup_api_key');
         location.reload();
@@ -577,21 +586,15 @@
         } else { infoText.innerText = "請點擊開始與結束日"; durationEl.innerText = "0 天"; }
     }
 
-    // 打開編輯視窗：優化標題渲染與負責人分類
     function openEditModal(task) {
         document.getElementById('modal-error').classList.add('hidden');
         document.getElementById('edit-task-id').value = task.id;
         document.getElementById('modal-task-id-display').innerText = `Task ID: ${task.id}`;
-
-        // 標題與懸浮顯示完整名稱
         const titleEl = document.getElementById('modal-task-name');
         titleEl.innerText = task.name;
         titleEl.title = task.name;
-
-        // 負責人分組邏輯
         const assigneeContainer = document.getElementById('modal-assignees-container');
         assigneeContainer.innerHTML = "";
-
         if (task.assignees && task.assignees.length > 0) {
             const grouped = {};
             task.assignees.forEach(user => {
@@ -605,7 +608,6 @@
                 if (!grouped[foundTeam]) grouped[foundTeam] = [];
                 grouped[foundTeam].push(user);
             });
-
             for (const teamName in grouped) {
                 const groupDiv = document.createElement('div');
                 groupDiv.className = "mb-3 w-full";
@@ -625,7 +627,6 @@
         } else {
             assigneeContainer.innerHTML = `<span class="text-xs text-gray-400 italic">無指派人員</span>`;
         }
-
         cal_rangeStart = normalizeToStartOfDay(task._start);
         cal_rangeEnd = normalizeToStartOfDay(task._due);
         const s = new Date(cal_rangeStart); cal_viewMonth = s.getMonth(); cal_viewYear = s.getFullYear();
@@ -667,11 +668,9 @@
         const dayTs = G_startDate.getTime() + (dayIdx * MS_PER_DAY);
         const d = new Date(dayTs);
         const member = G_teamStructure.flatMap(t => t.members).find(m => m.id === userId);
-
         const detailTitleEl = document.getElementById('detail-title');
         detailTitleEl.innerText = member ? `${member.name} 的每日明細` : '人員每日明細';
         detailTitleEl.title = detailTitleEl.innerText;
-
         document.getElementById('detail-date-label').innerText = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 (${getWeekday(d)})`;
         const taskListEl = document.getElementById('detail-task-list');
         const leaveListEl = document.getElementById('detail-leave-list');
@@ -719,6 +718,7 @@
         wrapper.classList.add('hidden'); loader.classList.remove('hidden');
         try {
             const listsRes = await fetch(`https://api.clickup.com/api/v2/folder/${FOLDER_ID}/list`, { headers: { 'Authorization': API_KEY } });
+            if (!listsRes.ok) throw new Error("Unauthorized");
             const listsData = await listsRes.json(); const allLists = listsData.lists || [];
             const resourceLists = allLists.filter(l => l.name.includes("[Resource]"));
             const projectLists = allLists.filter(l => !l.name.includes("[Resource]"));
@@ -749,7 +749,11 @@
                 else if (G_isFirstLoad) { scrollToToday(); G_isFirstLoad = false; }
                 else { if (container) container.scrollLeft = lastScrollLeft; }
             }, 100);
-        } catch (error) { document.getElementById('auth-overlay').classList.remove('hidden'); } finally { loader.classList.add('hidden'); }
+        } catch (error) {
+            document.getElementById('auth-overlay').classList.remove('hidden');
+        } finally {
+            loader.classList.add('hidden');
+        }
     }
 
     function calculateTimeline() {
